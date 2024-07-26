@@ -1,0 +1,7 @@
+[Addon]
+Name=Voice
+Category=InputMethod
+Version=@PROJECT_VERSION@
+Library=libvoice
+Type=SharedLibrary
+OnDemand=False
