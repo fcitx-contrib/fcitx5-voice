@@ -30,7 +30,7 @@ class VoiceEngine final : public InputMethodEngine {
     Instance *instance_;
     std::unique_ptr<HandlerTableEntry<EventHandler>> eventHandler_;
     std::string previousIm;
-    audio_async audio;
+    std::unique_ptr<audio_async> audio;
     struct whisper_context *ctx;
     std::thread thread_;
     bool is_running = false;

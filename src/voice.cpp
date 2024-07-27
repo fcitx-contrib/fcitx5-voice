@@ -7,10 +7,10 @@
 namespace fcitx {
 
 VoiceEngine::VoiceEngine(Instance *instance)
-    : instance_(instance), audio(10000) {
+    : instance_(instance), audio(std::make_unique<audio_async>(10000)) {
     // This asks for permission when undetermined, but will still succeed even
     // if user rejects.
-    if (!audio.init(-1, WHISPER_SAMPLE_RATE)) {
+    if (!audio->init(-1, WHISPER_SAMPLE_RATE)) {
         FCITX_ERROR() << "audio.init() failed.";
         return;
     }
@@ -54,8 +54,17 @@ VoiceEngine::VoiceEngine(Instance *instance)
 
         while (!quit.load()) {
             if (!is_running) {
+                audio.reset();
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
+            }
+            if (!audio) {
+                audio = std::make_unique<audio_async>(10000);
+                if (!audio->init(-1, WHISPER_SAMPLE_RATE)) {
+                    FCITX_ERROR() << "audio.init() failed.";
+                    continue;
+                }
+                audio->resume();
             }
             {
                 const auto t_now = std::chrono::high_resolution_clock::now();
@@ -70,11 +79,11 @@ VoiceEngine::VoiceEngine(Instance *instance)
                     continue;
                 }
 
-                audio.get(2000, pcmf32_new);
+                audio->get(2000, pcmf32_new);
 
                 if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, 0.6f,
                                  100.0f, false)) {
-                    audio.get(10000, pcmf32);
+                    audio->get(10000, pcmf32);
                 } else {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     continue;
@@ -105,12 +114,14 @@ VoiceEngine::VoiceEngine(Instance *instance)
                     instance_->eventDispatcher().schedule([=]() {
                         auto *inputContext = instance_->inputContextManager()
                                                  .lastFocusedInputContext();
-                        if (!inputContext) {
+                        if (!inputContext ||
+                            instance_->inputMethod(inputContext) != "voice") {
                             return;
                         }
                         Text preedit;
                         preedit.append(text);
                         auto &inputPanel = inputContext->inputPanel();
+                        inputPanel.reset();
                         inputPanel.setPreedit(preedit);
                         inputContext->updateUserInterface(
                             UserInterfaceComponent::InputPanel);
@@ -120,7 +131,6 @@ VoiceEngine::VoiceEngine(Instance *instance)
             }
             ++n_iter;
         }
-        audio.pause();
     });
 }
 
@@ -144,7 +154,6 @@ void VoiceEngine::keyEvent(const InputMethodEntry &, KeyEvent &keyEvent) {
 void VoiceEngine::activate(const InputMethodEntry &entry,
                            InputContextEvent &event) {
     if (has_permission) {
-        audio.resume();
         is_running = true;
     }
 };
@@ -152,7 +161,14 @@ void VoiceEngine::deactivate(const InputMethodEntry &entry,
                              InputContextEvent &event) {
     if (has_permission) {
         is_running = false;
-        audio.pause();
+        auto *inputContext =
+            instance_->inputContextManager().lastFocusedInputContext();
+        if (!inputContext) {
+            return;
+        }
+        auto &inputPanel = inputContext->inputPanel();
+        inputContext->commitString(inputPanel.preedit().toStringForCommit());
+        inputPanel.reset();
     }
 };
 } // namespace fcitx
