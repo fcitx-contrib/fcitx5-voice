@@ -36,9 +36,6 @@ VoiceEngine::VoiceEngine(Instance *instance)
         return;
     }
     thread_ = std::thread([this] {
-        const int n_samples_step = (1e-3 * 3000) * WHISPER_SAMPLE_RATE;
-        const int n_samples_len = (1e-3 * 10000) * WHISPER_SAMPLE_RATE;
-        const int n_samples_keep = (1e-3 * 200) * WHISPER_SAMPLE_RATE;
         const int n_samples_30s = (1e-3 * 30000.0) * WHISPER_SAMPLE_RATE;
 
         struct whisper_context_params cparams =
@@ -60,76 +57,35 @@ VoiceEngine::VoiceEngine(Instance *instance)
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             }
-            while (!quit.load()) {
-                audio.get(3000, pcmf32_new);
+            {
+                const auto t_now = std::chrono::high_resolution_clock::now();
+                const auto t_diff =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        t_now - t_last)
+                        .count();
 
-                if ((int)pcmf32_new.size() > 2 * n_samples_step) {
-                    fprintf(stderr,
-                            "\n\n%s: WARNING: cannot process audio fast "
-                            "enough, dropping audio ...\n\n",
-                            __func__);
-                    audio.clear();
+                if (t_diff < 2000) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
                     continue;
                 }
 
-                if ((int)pcmf32_new.size() >= n_samples_step) {
-                    audio.clear();
-                    break;
+                audio.get(2000, pcmf32_new);
+
+                if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, 0.6f,
+                                 100.0f, false)) {
+                    audio.get(10000, pcmf32);
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    continue;
                 }
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                t_last = t_now;
             }
-
-            const int n_samples_new = pcmf32_new.size();
-
-            // take up to params.length_ms audio from previous iteration
-            const int n_samples_take = std::min(
-                (int)pcmf32_old.size(),
-                std::max(0, n_samples_keep + n_samples_len - n_samples_new));
-
-            // printf("processing: take = %d, new = %d, old = %d\n",
-            // n_samples_take, n_samples_new, (int) pcmf32_old.size());
-
-            pcmf32.resize(n_samples_new + n_samples_take);
-
-            for (int i = 0; i < n_samples_take; i++) {
-                pcmf32[i] = pcmf32_old[pcmf32_old.size() - n_samples_take + i];
-            }
-
-            memcpy(pcmf32.data() + n_samples_take, pcmf32_new.data(),
-                   n_samples_new * sizeof(float));
-
-            pcmf32_old = pcmf32;
-            // {
-            //     const auto t_now  =
-            //     std::chrono::high_resolution_clock::now(); const auto t_diff
-            //     = std::chrono::duration_cast<std::chrono::milliseconds>(t_now
-            //     - t_last).count();
-
-            //     if (t_diff < 2000) {
-            //         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-            //         continue;
-            //     }
-
-            //     audio.get(2000, pcmf32_new);
-
-            //     if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, 0.6f,
-            //     100.0f, false)) {
-            //         audio.get(10000, pcmf32);
-            //     } else {
-            //         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-            //         continue;
-            //     }
-
-            //     t_last = t_now;
-            // }
 
             {
                 whisper_full_params wparams =
                     whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-                wparams.single_segment = false; // TODO: vad
+                wparams.single_segment = true;
                 wparams.max_tokens = 32;
                 if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) !=
                     0) {
@@ -140,14 +96,27 @@ VoiceEngine::VoiceEngine(Instance *instance)
                 const int64_t t0 = std::max(0.0, t1 - pcmf32.size() * 1000.0 /
                                                           WHISPER_SAMPLE_RATE);
 
-                // FCITX_INFO() << "Transcription " << n_iter << " START | t0 =
-                // " << (int)t0 << " ms | t1 = " << (int)t1 <<" ms";
+                FCITX_INFO()
+                    << "Transcription " << n_iter << " START | t0 =" << (int)t0
+                    << " ms | t1 = " << (int)t1 << " ms";
                 const int n_segments = whisper_full_n_segments(ctx);
                 for (int i = 0; i < n_segments; ++i) {
-                    const char *text = whisper_full_get_segment_text(ctx, i);
-                    FCITX_ERROR() << text;
+                    std::string text = whisper_full_get_segment_text(ctx, i);
+                    instance_->eventDispatcher().schedule([=]() {
+                        auto *inputContext = instance_->inputContextManager()
+                                                 .lastFocusedInputContext();
+                        if (!inputContext) {
+                            return;
+                        }
+                        Text preedit;
+                        preedit.append(text);
+                        auto &inputPanel = inputContext->inputPanel();
+                        inputPanel.setPreedit(preedit);
+                        inputContext->updateUserInterface(
+                            UserInterfaceComponent::InputPanel);
+                    });
                 }
-                // FCITX_INFO() << "### Transcription " << n_iter << " END";
+                FCITX_INFO() << "### Transcription " << n_iter << " END";
             }
             ++n_iter;
         }
