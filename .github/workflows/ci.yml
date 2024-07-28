@@ -39,6 +39,7 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         run: |
           brew install ninja \
+            extra-cmake-modules \
             sdl2
           wget https://github.com/fcitx-contrib/fcitx5-macos/releases/download/latest/Fcitx5-${{ matrix.arch }}.tar.bz2
           sudo tar xjvf Fcitx5-${{ matrix.arch }}.tar.bz2 -C "/Library/Input Methods"
@@ -48,6 +49,8 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13 \
+            -DCMAKE_FIND_ROOT_PATH="/Library/Input Methods/Fcitx5.app/Contents" \
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build

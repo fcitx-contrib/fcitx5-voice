@@ -22,8 +22,7 @@ if (APPLE)
         ${CoreHaptics_LIB}
         ${AVFoundation_LIB}
         ${CoreHaptics_LIB}
-        ${Cocoa_LIB}
-        objc)
+        ${Cocoa_LIB})
 endif()
 
 add_library(voice MODULE
