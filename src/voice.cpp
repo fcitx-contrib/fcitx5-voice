@@ -48,9 +48,7 @@ VoiceEngine::VoiceEngine(Instance *instance)
         std::vector<float> pcmf32(n_samples_30s, 0.0f);
         std::vector<float> pcmf32_old;
         std::vector<float> pcmf32_new(n_samples_30s, 0.0f);
-        int n_iter = 0;
         auto t_last = std::chrono::high_resolution_clock::now();
-        const auto t_start = t_last;
 
         while (!quit.load()) {
             if (!is_running) {
@@ -101,35 +99,27 @@ VoiceEngine::VoiceEngine(Instance *instance)
                     FCITX_ERROR() << "Failed to process audio.";
                     continue;
                 }
-                const int64_t t1 = (t_last - t_start).count() / 1000000;
-                const int64_t t0 = std::max(0.0, t1 - pcmf32.size() * 1000.0 /
-                                                          WHISPER_SAMPLE_RATE);
-
-                FCITX_INFO()
-                    << "Transcription " << n_iter << " START | t0 =" << (int)t0
-                    << " ms | t1 = " << (int)t1 << " ms";
-                const int n_segments = whisper_full_n_segments(ctx);
-                for (int i = 0; i < n_segments; ++i) {
-                    std::string text = whisper_full_get_segment_text(ctx, i);
-                    instance_->eventDispatcher().schedule([=]() {
-                        auto *inputContext = instance_->inputContextManager()
-                                                 .lastFocusedInputContext();
-                        if (!inputContext ||
-                            instance_->inputMethod(inputContext) != "voice") {
-                            return;
-                        }
-                        Text preedit;
-                        preedit.append(text);
-                        auto &inputPanel = inputContext->inputPanel();
-                        inputPanel.reset();
-                        inputPanel.setPreedit(preedit);
-                        inputContext->updateUserInterface(
-                            UserInterfaceComponent::InputPanel);
-                    });
+                if (!whisper_full_n_segments(ctx)) {
+                    FCITX_WARN() << "No segments.";
+                    continue;
                 }
-                FCITX_INFO() << "### Transcription " << n_iter << " END";
+                std::string text = whisper_full_get_segment_text(ctx, 0);
+                instance_->eventDispatcher().schedule([=]() {
+                    auto *inputContext = instance_->inputContextManager()
+                                             .lastFocusedInputContext();
+                    if (!inputContext ||
+                        instance_->inputMethod(inputContext) != "voice") {
+                        return;
+                    }
+                    Text preedit;
+                    preedit.append(text);
+                    auto &inputPanel = inputContext->inputPanel();
+                    inputPanel.reset();
+                    inputPanel.setPreedit(preedit);
+                    inputContext->updateUserInterface(
+                        UserInterfaceComponent::InputPanel);
+                });
             }
-            ++n_iter;
         }
     });
 }
