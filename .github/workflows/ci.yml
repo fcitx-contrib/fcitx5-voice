@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt install -y clang-format
+
+      - name: Lint
+        run: |
+          find src -name '*.mm' -o -name '*.h' -o -name '*.cpp' | xargs clang-format -Werror --dry-run
+
+  build:
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-13]
+        include:
+          - { os: macos-14, arch: arm64 }
+          - { os: macos-13, arch: x86_64 }
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install dependencies (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew install ninja \
+            extra-cmake-modules \
+            sdl2
+          wget https://github.com/fcitx-contrib/fcitx5-macos/releases/download/latest/Fcitx5-${{ matrix.arch }}.tar.bz2
+          sudo tar xjvf Fcitx5-${{ matrix.arch }}.tar.bz2 -C "/Library/Input Methods"
+
+      - name: Configure (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13 \
+            -DCMAKE_FIND_ROOT_PATH="/Library/Input Methods/Fcitx5.app/Contents" \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Setup tmate session
+        if: ${{ failure() }}
+        uses: mxschmitt/action-tmate@v3
